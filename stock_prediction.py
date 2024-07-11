@@ -24,6 +24,9 @@ def predict_stock_price(df):
     prophet_df = df.reset_index()[['Date', 'Close']]
     prophet_df.columns = ['ds', 'y']
     
+    # タイムゾーン情報を削除
+    prophet_df['ds'] = prophet_df['ds'].dt.tz_localize(None)
+    
     model = Prophet(daily_seasonality=True)
     model.fit(prophet_df)
     
