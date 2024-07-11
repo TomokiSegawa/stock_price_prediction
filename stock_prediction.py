@@ -49,7 +49,7 @@ def create_prediction_table(df, forecast):
         '終値': forecast_values + [np.nan],
         '値差': [forecast_values[0] - last_close] + list(np.diff(forecast_values)) + [np.nan],
         '騰落率': [((forecast_values[0] - last_close) / last_close) * 100] + 
-                  [((forecast_values[i] - last_close) / last_close) * 100 for i in range(1, 10)] + 
+                 [((forecast_values[i] - last_close) / last_close) * 100 for i in range(1, 10)] + 
                   [np.nan]
     }
     prediction_df = pd.DataFrame(table_data)
@@ -74,10 +74,10 @@ def main():
                 st.subheader('株価予測表')
                 prediction_table = create_prediction_table(df, forecast)
                 st.dataframe(prediction_table.style.format({
-                    '始値': '{:.2f}',
-                    '終値': '{:.2f}',
-                    '値差': '{:.2f}',
-                    '騰落率': '{:.2f}%'
+                    '始値': '{:.0f}',
+                    '終値': '{:.0f}',
+                    '値差': '{:.0f}',
+                    '騰落率': '{:.1f}%'
                 }), height=200)  # Adjust height to show full table
 
             except Exception as e:
