@@ -26,8 +26,14 @@ def get_stock_data(code):
         st.error(f"Yahoo Finance APIからのデータ取得に失敗しました: {str(e)}")
         return None, None
 
-def get_company_name(code):
+def get_company_name(code, stock):
     try:
+        # まず、yfinanceから企業名を取得
+        company_name = stock.info.get('longName') or stock.info.get('shortName')
+        if company_name:
+            return company_name
+
+        # yfinanceで取得できない場合、JPXのウェブサイトから取得を試みる
         url = f"https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
         response = requests.get(url)
         tables = pd.read_html(response.text)
@@ -36,6 +42,8 @@ def get_company_name(code):
                 match = table[table['コード'] == int(code)]
                 if not match.empty:
                     return match['銘柄名'].values[0]
+        
+        # どちらの方法でも取得できない場合はデフォルト名を返す
         return f"企業 {code}"
     except Exception as e:
         st.warning(f"企業名の取得に失敗しました: {str(e)}")
@@ -129,7 +137,7 @@ def main():
                     st.error("データの取得に失敗しました。別の銘柄コードを試すか、しばらく待ってから再度お試しください。")
                     return
 
-                company_name = get_company_name(stock_code)
+                company_name = get_company_name(stock_code, stock)
                 forecast = predict_stock_price(df)
 
                 st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
