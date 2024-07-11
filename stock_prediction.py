@@ -80,7 +80,7 @@ def predict_stock_price(df):
     model.fit(prophet_df)
     
     last_date = prophet_df['ds'].max()
-    future_dates = pd.date_range(start=last_date + BDay(1), periods=10, freq='B')
+    future_dates = pd.date_range(start=last_date + BDay(1), periods=5, freq='B')
     future = pd.DataFrame({'ds': future_dates})
     
     for column in ['open', 'high', 'low', 'volume', 'price_range', 'prev_close', 'close_to_open']:
