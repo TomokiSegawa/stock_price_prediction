@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from statsmodels.tsa.arima.model import ARIMA
+from prophet import Prophet
 from datetime import datetime, timedelta
 import japanize_matplotlib
 import traceback
@@ -14,23 +14,30 @@ def is_valid_stock_code(code):
 
 def get_stock_data(code):
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=180)
+    start_date = end_date - timedelta(days=365)  # 1年分のデータを取得
     stock = yf.Ticker(f"{code}.T")
     df = stock.history(start=start_date, end=end_date)
-    return df
+    return stock, df
 
 def predict_stock_price(df):
-    model = ARIMA(df['Close'], order=(1, 1, 1))
-    results = model.fit()
-    forecast = results.forecast(steps=10)
-    return forecast
+    # Prophetのための日付フォーマット変更
+    prophet_df = df.reset_index()[['Date', 'Close']]
+    prophet_df.columns = ['ds', 'y']
+    
+    model = Prophet(daily_seasonality=True)
+    model.fit(prophet_df)
+    
+    future_dates = model.make_future_dataframe(periods=10)
+    forecast = model.predict(future_dates)
+    
+    return forecast.tail(10)['yhat']
 
-def create_stock_chart(df, forecast):
+def create_stock_chart(df, forecast, company_name, code):
     plt.figure(figsize=(12, 6))
     sns.lineplot(data=df, x=df.index, y='Close', label='過去の株価')
     future_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=10)
     sns.lineplot(x=future_dates, y=forecast, label='予測株価', linestyle='--')
-    plt.title('株価チャート（過去6ヶ月と今後10日間の予測）')
+    plt.title(f'{company_name}（{code}）の株価チャート（過去1年間と今後10日間の予測）')
     plt.xlabel('日付')
     plt.ylabel('株価')
     plt.legend()
@@ -64,16 +71,17 @@ def main():
     if stock_code:
         if is_valid_stock_code(stock_code):
             try:
-                df = get_stock_data(stock_code)
+                stock, df = get_stock_data(stock_code)
+                company_name = stock.info['longName']
                 forecast = predict_stock_price(df)
 
-                st.subheader('株価チャート')
-                chart = create_stock_chart(df, forecast)
+                st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
+                chart = create_stock_chart(df, forecast, company_name, stock_code)
                 st.pyplot(chart)
 
-                st.subheader('株価予測表')
+                st.subheader(f'【{company_name}（{stock_code}）の株価予測表】')
                 prediction_table = create_prediction_table(df, forecast)
-                st.table(prediction_table)  # Use st.table instead of st.dataframe
+                st.table(prediction_table)
 
             except Exception as e:
                 st.error(f'エラーが発生しました: {str(e)}')
