@@ -21,15 +21,15 @@ def get_stock_data(code):
 def predict_stock_price(df):
     model = ARIMA(df['Close'], order=(1, 1, 1))
     results = model.fit()
-    forecast = results.forecast(steps=5)
+    forecast = results.forecast(steps=10)
     return forecast
 
 def create_stock_chart(df, forecast):
     plt.figure(figsize=(12, 6))
     sns.lineplot(data=df, x=df.index, y='Close', label='過去の株価')
-    future_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=5)
+    future_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=10)
     sns.lineplot(x=future_dates, y=forecast, label='予測株価', linestyle='--')
-    plt.title('株価チャート（過去6ヶ月と今後5日間の予測）')
+    plt.title('株価チャート（過去6ヶ月と今後10日間の予測）')
     plt.xlabel('日付')
     plt.ylabel('株価')
     plt.legend()
@@ -38,15 +38,17 @@ def create_stock_chart(df, forecast):
 def create_prediction_table(df, forecast):
     last_close = df['Close'].iloc[-1]
     today = pd.Timestamp.now().floor('D')
-    dates = [today + timedelta(days=i) for i in range(6)]
+    dates = [today + timedelta(days=i) for i in range(11)]
     
     table_data = {
-        '日付': ['今日'] + [f'{i}日後' for i in range(1, 6)],
+        '日付': ['今日'] + [f'{i}日後' for i in range(1, 11)],
         '始値': [last_close] + list(forecast),
         '終値': list(forecast) + [np.nan],
         '値差': [forecast[0] - last_close] + list(np.diff(forecast)) + [np.nan]
     }
-    return pd.DataFrame(table_data).set_index('日付')
+    prediction_df = pd.DataFrame(table_data)
+    prediction_df['日付'] = dates
+    return prediction_df.set_index('日付')
 
 def main():
     st.set_page_config(layout="wide")
