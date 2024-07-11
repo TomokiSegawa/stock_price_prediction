@@ -44,14 +44,16 @@ def create_prediction_table(df, forecast):
     forecast_values = list(forecast.values)  # Convert forecast to a list
     
     table_data = {
-        '日付': dates,
+        '日付': ['今日'] + [f'{i}日後' for i in range(1, 11)],
         '始値': [last_close] + forecast_values,
         '終値': forecast_values + [np.nan],
-        '値差': [forecast_values[0] - last_close] + list(np.diff(forecast_values)) + [np.nan]
+        '値差': [forecast_values[0] - last_close] + list(np.diff(forecast_values)) + [np.nan],
+        '騰落率': [((forecast_values[0] - last_close) / last_close) * 100] + 
+                  [((forecast_values[i] - last_close) / last_close) * 100 for i in range(1, 10)] + 
+                  [np.nan]
     }
     prediction_df = pd.DataFrame(table_data)
-    prediction_df['日付'] = prediction_df['日付'].dt.strftime('%Y-%m-%d')
-    return prediction_df.set_index('日付')
+    return prediction_df.set_index('日付').T  # Transpose the dataframe
 
 def main():
     st.set_page_config(layout="wide")
@@ -74,8 +76,9 @@ def main():
                 st.dataframe(prediction_table.style.format({
                     '始値': '{:.2f}',
                     '終値': '{:.2f}',
-                    '値差': '{:.2f}'
-                }))
+                    '値差': '{:.2f}',
+                    '騰落率': '{:.2f}%'
+                }), height=200)  # Adjust height to show full table
 
             except Exception as e:
                 st.error(f'エラーが発生しました: {str(e)}')
