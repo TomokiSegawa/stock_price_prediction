@@ -118,7 +118,7 @@ def create_prediction_table(df, forecast):
         '値差': [f'{round(forecast_values[0] - last_close):,}'] + 
                 [f'{round(forecast_values[i] - forecast_values[i-1]):,}' for i in range(1, 5)] + [''],
         '騰落率': [f'{((forecast_values[0] - last_close) / last_close * 100):.1f}%'] + 
-                 [f'{((v - last_close) / last_close * 100):.1f}%' for v in forecast_values[1:]] + ['']
+                 [f'{((forecast_values[i] - forecast_values[i-1]) / forecast_values[i-1] * 100):.1f}%' for i in range(1, 5)] + ['']
     }
     prediction_df = pd.DataFrame(table_data)
     return prediction_df.set_index('日付').T  # Transpose the dataframe
