@@ -8,6 +8,7 @@ from prophet import Prophet
 from datetime import datetime, timedelta
 import japanize_matplotlib
 import traceback
+import requests
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -15,9 +16,30 @@ def is_valid_stock_code(code):
 def get_stock_data(code):
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365 * 2)  # 2年分のデータを取得
-    stock = yf.Ticker(f"{code}.T")
-    df = stock.history(start=start_date, end=end_date)
-    return stock, df
+    try:
+        stock = yf.Ticker(f"{code}.T")
+        df = stock.history(start=start_date, end=end_date)
+        if df.empty:
+            raise ValueError("データが取得できませんでした。")
+        return stock, df
+    except Exception as e:
+        st.error(f"Yahoo Finance APIからのデータ取得に失敗しました: {str(e)}")
+        return None, None
+
+def get_company_name(code):
+    try:
+        url = f"https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
+        response = requests.get(url)
+        tables = pd.read_html(response.text)
+        for table in tables:
+            if 'コード' in table.columns and '銘柄名' in table.columns:
+                match = table[table['コード'] == int(code)]
+                if not match.empty:
+                    return match['銘柄名'].values[0]
+        return f"企業 {code}"
+    except Exception as e:
+        st.warning(f"企業名の取得に失敗しました: {str(e)}")
+        return f"企業 {code}"
 
 def prepare_data_for_prophet(df):
     prophet_df = df.reset_index()[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
@@ -66,9 +88,9 @@ def predict_stock_price(df):
 def create_stock_chart(df, forecast, company_name, code):
     plt.figure(figsize=(12, 6))
     sns.lineplot(data=df, x=df.index, y='Close', label='過去の株価')
-    future_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=10)
+    future_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=5)
     sns.lineplot(x=future_dates, y=forecast, label='予測株価', linestyle='--')
-    plt.title(f'{company_name}（{code}）の株価チャート（過去1年間と今後10日間の予測）')
+    plt.title(f'{company_name}（{code}）の株価チャート（過去2年間と今後5日間の予測）')
     plt.xlabel('日付')
     plt.ylabel('株価')
     plt.legend()
@@ -77,16 +99,16 @@ def create_stock_chart(df, forecast, company_name, code):
 def create_prediction_table(df, forecast):
     last_close = df['Close'].iloc[-1]
     today = pd.Timestamp.now().floor('D')
-    dates = [today + timedelta(days=i) for i in range(11)]
+    dates = [today + timedelta(days=i) for i in range(6)]
     
     forecast_values = list(forecast.values)  # Convert forecast to a list
     
     table_data = {
-        '日付': ['今日'] + [f'{i}日後' for i in range(1, 11)],
+        '日付': ['今日'] + [f'{i}日後' for i in range(1, 6)],
         '始値': [f'{round(last_close):,}'] + [f'{round(v):,}' for v in forecast_values],
         '終値': [f'{round(v):,}' for v in forecast_values] + [''],
         '値差': [f'{round(forecast_values[0] - last_close):,}'] + 
-                [f'{round(forecast_values[i] - forecast_values[i-1]):,}' for i in range(1, 10)] + [''],
+                [f'{round(forecast_values[i] - forecast_values[i-1]):,}' for i in range(1, 5)] + [''],
         '騰落率': [f'{((forecast_values[0] - last_close) / last_close * 100):.1f}%'] + 
                  [f'{((v - last_close) / last_close * 100):.1f}%' for v in forecast_values[1:]] + ['']
     }
@@ -103,7 +125,11 @@ def main():
         if is_valid_stock_code(stock_code):
             try:
                 stock, df = get_stock_data(stock_code)
-                company_name = stock.info['longName']
+                if stock is None or df is None:
+                    st.error("データの取得に失敗しました。別の銘柄コードを試すか、しばらく待ってから再度お試しください。")
+                    return
+
+                company_name = get_company_name(stock_code)
                 forecast = predict_stock_price(df)
 
                 st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
