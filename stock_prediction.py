@@ -11,6 +11,9 @@ import requests
 from pandas.tseries.offsets import BDay
 from bs4 import BeautifulSoup
 from sklearn.preprocessing import MinMaxScaler
+
+# TensorFlowのインポートを修正
+import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.optimizers import Adam
