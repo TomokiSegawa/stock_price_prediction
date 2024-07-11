@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import japanize_matplotlib
@@ -10,10 +9,8 @@ import traceback
 import requests
 from pandas.tseries.offsets import BDay
 from bs4 import BeautifulSoup
+from statsmodels.tsa.arima.model import ARIMA
 from sklearn.preprocessing import MinMaxScaler
-
-# TensorFlowのインポートを修正
-import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.optimizers import Adam
@@ -36,19 +33,16 @@ def get_stock_data(code):
 
 def get_company_name(code):
     try:
-        # まず、yfinanceから企業名を取得
         stock = yf.Ticker(f"{code}.T")
         company_name = stock.info.get('longName') or stock.info.get('shortName')
         if company_name:
             return company_name
 
-        # yfinanceで取得できない場合、Google検索を試みる
         url = f"https://www.google.com/search?q={code}+株式会社"
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Google検索結果の最初のタイトルを取得
         title = soup.find('h3', class_='r')
         if title:
             return title.text.split('-')[0].strip()
@@ -57,12 +51,6 @@ def get_company_name(code):
     except Exception as e:
         st.warning(f"企業名の取得に失敗しました: {str(e)}")
         return f"企業 {code}"
-
-def prepare_data_for_lstm(df):
-    data = df[['Close']].values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data)
-    return scaled_data, scaler
 
 def create_sequences(data, seq_length):
     X, y = [], []
@@ -73,14 +61,21 @@ def create_sequences(data, seq_length):
 
 def build_lstm_model(input_shape):
     model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))
-    model.add(LSTM(units=50))
+    model.add(LSTM(50, return_sequences=True, input_shape=input_shape))
+    model.add(LSTM(50))
     model.add(Dense(1))
     model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
     return model
 
-def predict_stock_price(df):
-    scaled_data, scaler = prepare_data_for_lstm(df)
+def predict_hybrid(df, forecast_period=10):
+    # ARIMA model
+    arima_model = ARIMA(df['Close'], order=(1, 1, 1))
+    arima_results = arima_model.fit()
+    arima_forecast = arima_results.forecast(steps=forecast_period)
+    
+    # LSTM model
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(df['Close'].values.reshape(-1, 1))
     
     seq_length = 60
     X, y = create_sequences(scaled_data, seq_length)
@@ -89,30 +84,33 @@ def predict_stock_price(df):
     X_train, X_test = X[:split], X[split:]
     y_train, y_test = y[:split], y[split:]
     
-    model = build_lstm_model((seq_length, 1))
-    model.fit(X_train, y_train, epochs=50, batch_size=32, verbose=0)
+    lstm_model = build_lstm_model((seq_length, 1))
+    lstm_model.fit(X_train, y_train, epochs=50, batch_size=32, verbose=0)
     
     last_sequence = scaled_data[-seq_length:]
-    next_10_days = []
+    lstm_forecast = []
     
-    for _ in range(10):
-        next_pred = model.predict(last_sequence.reshape(1, seq_length, 1))
-        next_10_days.append(next_pred[0, 0])
+    for _ in range(forecast_period):
+        next_pred = lstm_model.predict(last_sequence.reshape(1, seq_length, 1))
+        lstm_forecast.append(next_pred[0, 0])
         last_sequence = np.roll(last_sequence, -1)
         last_sequence[-1] = next_pred
     
-    next_10_days = scaler.inverse_transform(np.array(next_10_days).reshape(-1, 1))
+    lstm_forecast = scaler.inverse_transform(np.array(lstm_forecast).reshape(-1, 1)).flatten()
+    
+    # Combine ARIMA and LSTM forecasts
+    hybrid_forecast = (arima_forecast + lstm_forecast) / 2
     
     last_date = df.index[-1]
-    future_dates = pd.date_range(start=last_date + BDay(1), periods=10, freq='B')
-    forecast = pd.DataFrame({'ds': future_dates, 'yhat': next_10_days.flatten()})
+    future_dates = pd.date_range(start=last_date + BDay(1), periods=forecast_period, freq='B')
+    forecast = pd.DataFrame({'ds': future_dates, 'yhat': hybrid_forecast})
     
     return forecast
 
 def create_stock_chart(df, forecast, company_name, code):
     plt.figure(figsize=(12, 6))
-    sns.lineplot(data=df, x=df.index, y='Close', label='過去の株価')
-    sns.lineplot(x=forecast['ds'], y=forecast['yhat'], label='予測株価', linestyle='--')
+    plt.plot(df.index, df['Close'], label='過去の株価')
+    plt.plot(forecast['ds'], forecast['yhat'], label='予測株価', linestyle='--')
     plt.title(f'{company_name}（{code}）の株価チャート（過去2年間と今後の予測）')
     plt.xlabel('日付')
     plt.ylabel('株価')
@@ -136,7 +134,7 @@ def create_prediction_table(df, forecast):
 
 def main():
     st.set_page_config(layout="wide")
-    st.title('株価予測アプリ（改良版）')
+    st.title('株価予測アプリ（ハイブリッドモデル版）')
 
     stock_code = st.text_input('4桁の株式コードを入力してください:')
 
@@ -149,7 +147,7 @@ def main():
                     return
 
                 company_name = get_company_name(stock_code)
-                forecast = predict_stock_price(df)
+                forecast = predict_hybrid(df)
 
                 st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
                 chart = create_stock_chart(df, forecast, company_name, stock_code)
