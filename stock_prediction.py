@@ -4,12 +4,16 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from prophet import Prophet
 from datetime import datetime, timedelta
 import japanize_matplotlib
 import traceback
 import requests
 from pandas.tseries.offsets import BDay
+from bs4 import BeautifulSoup
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.optimizers import Adam
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -27,68 +31,80 @@ def get_stock_data(code):
         st.error(f"Yahoo Finance APIからのデータ取得に失敗しました: {str(e)}")
         return None, None
 
-def get_company_name(code, stock):
+def get_company_name(code):
     try:
+        # まず、yfinanceから企業名を取得
+        stock = yf.Ticker(f"{code}.T")
         company_name = stock.info.get('longName') or stock.info.get('shortName')
         if company_name:
             return company_name
+
+        # yfinanceで取得できない場合、Google検索を試みる
+        url = f"https://www.google.com/search?q={code}+株式会社"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        url = f"https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"
-        response = requests.get(url)
-        tables = pd.read_html(response.text)
-        for table in tables:
-            if 'コード' in table.columns and '銘柄名' in table.columns:
-                match = table[table['コード'] == int(code)]
-                if not match.empty:
-                    return match['銘柄名'].values[0]
+        # Google検索結果の最初のタイトルを取得
+        title = soup.find('h3', class_='r')
+        if title:
+            return title.text.split('-')[0].strip()
         
         return f"企業 {code}"
     except Exception as e:
         st.warning(f"企業名の取得に失敗しました: {str(e)}")
         return f"企業 {code}"
 
-def prepare_data_for_prophet(df):
-    prophet_df = df.reset_index()[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-    prophet_df.columns = ['ds', 'open', 'high', 'low', 'y', 'volume']
-    prophet_df['ds'] = prophet_df['ds'].dt.tz_localize(None)
-    
-    prophet_df['price_range'] = prophet_df['high'] - prophet_df['low']
-    prophet_df['prev_close'] = prophet_df['y'].shift(1)
-    prophet_df['close_to_open'] = prophet_df['y'] / prophet_df['open']
-    
-    return prophet_df.dropna()
+def prepare_data_for_lstm(df):
+    data = df[['Close']].values
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data)
+    return scaled_data, scaler
+
+def create_sequences(data, seq_length):
+    X, y = [], []
+    for i in range(len(data) - seq_length):
+        X.append(data[i:(i + seq_length), 0])
+        y.append(data[i + seq_length, 0])
+    return np.array(X), np.array(y)
+
+def build_lstm_model(input_shape):
+    model = Sequential()
+    model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))
+    model.add(LSTM(units=50))
+    model.add(Dense(1))
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
+    return model
 
 def predict_stock_price(df):
-    prophet_df = prepare_data_for_prophet(df)
+    scaled_data, scaler = prepare_data_for_lstm(df)
     
-    model = Prophet(
-        daily_seasonality=True,
-        weekly_seasonality=True,
-        yearly_seasonality=True,
-        changepoint_prior_scale=0.05,
-        seasonality_prior_scale=10
-    )
+    seq_length = 60
+    X, y = create_sequences(scaled_data, seq_length)
     
-    model.add_regressor('open')
-    model.add_regressor('high')
-    model.add_regressor('low')
-    model.add_regressor('volume')
-    model.add_regressor('price_range')
-    model.add_regressor('prev_close')
-    model.add_regressor('close_to_open')
+    split = int(0.8 * len(X))
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
     
-    model.fit(prophet_df)
+    model = build_lstm_model((seq_length, 1))
+    model.fit(X_train, y_train, epochs=50, batch_size=32, verbose=0)
     
-    last_date = prophet_df['ds'].max()
-    future_dates = pd.date_range(start=last_date + BDay(1), periods=5, freq='B')
-    future = pd.DataFrame({'ds': future_dates})
+    last_sequence = scaled_data[-seq_length:]
+    next_10_days = []
     
-    for column in ['open', 'high', 'low', 'volume', 'price_range', 'prev_close', 'close_to_open']:
-        future[column] = prophet_df[column].iloc[-1]
+    for _ in range(10):
+        next_pred = model.predict(last_sequence.reshape(1, seq_length, 1))
+        next_10_days.append(next_pred[0, 0])
+        last_sequence = np.roll(last_sequence, -1)
+        last_sequence[-1] = next_pred
     
-    forecast = model.predict(future)
+    next_10_days = scaler.inverse_transform(np.array(next_10_days).reshape(-1, 1))
     
-    return forecast[['ds', 'yhat']]
+    last_date = df.index[-1]
+    future_dates = pd.date_range(start=last_date + BDay(1), periods=10, freq='B')
+    forecast = pd.DataFrame({'ds': future_dates, 'yhat': next_10_days.flatten()})
+    
+    return forecast
 
 def create_stock_chart(df, forecast, company_name, code):
     plt.figure(figsize=(12, 6))
@@ -129,7 +145,7 @@ def main():
                     st.error("データの取得に失敗しました。別の銘柄コードを試すか、しばらく待ってから再度お試しください。")
                     return
 
-                company_name = get_company_name(stock_code, stock)
+                company_name = get_company_name(stock_code)
                 forecast = predict_stock_price(df)
 
                 st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
