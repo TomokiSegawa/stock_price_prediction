@@ -45,12 +45,12 @@ def create_prediction_table(df, forecast):
     
     table_data = {
         '日付': ['今日'] + [f'{i}日後' for i in range(1, 11)],
-        '始値': [last_close] + forecast_values,
-        '終値': forecast_values + [np.nan],
-        '値差': [forecast_values[0] - last_close] + list(np.diff(forecast_values)) + [np.nan],
-        '騰落率': [((forecast_values[0] - last_close) / last_close) * 100] + 
-                 [((forecast_values[i] - last_close) / last_close) * 100 for i in range(1, 10)] + 
-                  [np.nan]
+        '始値': [f'{round(last_close):,}'] + [f'{round(v):,}' for v in forecast_values],
+        '終値': [f'{round(v):,}' for v in forecast_values] + [''],
+        '値差': [f'{round(forecast_values[0] - last_close):,}'] + 
+                [f'{round(forecast_values[i] - forecast_values[i-1]):,}' for i in range(1, 10)] + [''],
+        '騰落率': [f'{((forecast_values[0] - last_close) / last_close * 100):.1f}%'] + 
+                 [f'{((v - last_close) / last_close * 100):.1f}%' for v in forecast_values[1:]] + ['']
     }
     prediction_df = pd.DataFrame(table_data)
     return prediction_df.set_index('日付').T  # Transpose the dataframe
@@ -73,12 +73,7 @@ def main():
 
                 st.subheader('株価予測表')
                 prediction_table = create_prediction_table(df, forecast)
-                st.dataframe(prediction_table.style.format({
-                    '始値': '{:.0f}',
-                    '終値': '{:.0f}',
-                    '値差': '{:.0f}',
-                    '騰落率': '{:.1f}%'
-                }), height=200)  # Adjust height to show full table
+                st.table(prediction_table)  # Use st.table instead of st.dataframe
 
             except Exception as e:
                 st.error(f'エラーが発生しました: {str(e)}')
