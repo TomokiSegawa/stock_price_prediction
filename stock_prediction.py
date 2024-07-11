@@ -2,9 +2,11 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import seaborn as sns
 import matplotlib.pyplot as plt
 from statsmodels.tsa.arima.model import ARIMA
 from datetime import datetime, timedelta
+import japanize_matplotlib
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -24,9 +26,9 @@ def predict_stock_price(df):
 
 def create_stock_chart(df, forecast):
     plt.figure(figsize=(12, 6))
-    plt.plot(df.index, df['Close'], label='過去の株価')
+    sns.lineplot(data=df, x=df.index, y='Close', label='過去の株価')
     future_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=5)
-    plt.plot(future_dates, forecast, label='予測株価', linestyle='--')
+    sns.lineplot(x=future_dates, y=forecast, label='予測株価', linestyle='--')
     plt.title('株価チャート（過去6ヶ月と今後5日間の予測）')
     plt.xlabel('日付')
     plt.ylabel('株価')
@@ -35,6 +37,9 @@ def create_stock_chart(df, forecast):
 
 def create_prediction_table(df, forecast):
     last_close = df['Close'].iloc[-1]
+    today = pd.Timestamp.now().floor('D')
+    dates = [today + timedelta(days=i) for i in range(6)]
+    
     table_data = {
         '日付': ['今日'] + [f'{i}日後' for i in range(1, 6)],
         '始値': [last_close] + list(forecast),
@@ -44,6 +49,7 @@ def create_prediction_table(df, forecast):
     return pd.DataFrame(table_data).set_index('日付')
 
 def main():
+    st.set_page_config(layout="wide")
     st.title('株価予測アプリ')
 
     stock_code = st.text_input('4桁の株式コードを入力してください:')
@@ -60,7 +66,7 @@ def main():
 
                 st.subheader('株価予測表')
                 prediction_table = create_prediction_table(df, forecast)
-                st.table(prediction_table.style.format({
+                st.dataframe(prediction_table.style.format({
                     '始値': '{:.2f}',
                     '終値': '{:.2f}',
                     '値差': '{:.2f}'
