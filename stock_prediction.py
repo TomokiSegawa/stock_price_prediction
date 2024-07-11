@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from statsmodels.tsa.arima.model import ARIMA
 from datetime import datetime, timedelta
 import japanize_matplotlib
+import traceback
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -40,14 +41,16 @@ def create_prediction_table(df, forecast):
     today = pd.Timestamp.now().floor('D')
     dates = [today + timedelta(days=i) for i in range(11)]
     
+    forecast_values = list(forecast.values)  # Convert forecast to a list
+    
     table_data = {
-        '日付': ['今日'] + [f'{i}日後' for i in range(1, 11)],
-        '始値': [last_close] + list(forecast),
-        '終値': list(forecast) + [np.nan],
-        '値差': [forecast[0] - last_close] + list(np.diff(forecast)) + [np.nan]
+        '日付': dates,
+        '始値': [last_close] + forecast_values,
+        '終値': forecast_values + [np.nan],
+        '値差': [forecast_values[0] - last_close] + list(np.diff(forecast_values)) + [np.nan]
     }
     prediction_df = pd.DataFrame(table_data)
-    prediction_df['日付'] = dates
+    prediction_df['日付'] = prediction_df['日付'].dt.strftime('%Y-%m-%d')
     return prediction_df.set_index('日付')
 
 def main():
@@ -76,6 +79,7 @@ def main():
 
             except Exception as e:
                 st.error(f'エラーが発生しました: {str(e)}')
+                st.error(f'詳細なエラー情報:\n{traceback.format_exc()}')
         else:
             st.error('無効な株式コードです。4桁の数字を入力してください。')
 
