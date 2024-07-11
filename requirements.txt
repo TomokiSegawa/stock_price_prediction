@@ -4,5 +4,5 @@ pandas==1.5.3
 numpy==1.24.3
 matplotlib==3.7.1
 seaborn==0.12.2
-statsmodels==0.13.5
+prophet==1.1.2
 japanize-matplotlib==1.1.3
