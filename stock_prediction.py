@@ -112,7 +112,7 @@ def create_prediction_table(df, forecast):
     forecast_values = list(forecast.values)  # Convert forecast to a list
     
     table_data = {
-        '日付': ['今日'] + [f'{i}日後' for i in range(1, 6)],
+        '日付': [date.strftime('%Y-%m-%d') for date in dates],
         '始値': [f'{round(last_close):,}'] + [f'{round(v):,}' for v in forecast_values],
         '終値': [f'{round(v):,}' for v in forecast_values] + [''],
         '値差': [f'{round(forecast_values[0] - last_close):,}'] + 
