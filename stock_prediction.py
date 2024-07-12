@@ -107,15 +107,19 @@ def predict_hybrid(df, forecast_period=10):
 
     try:
         for _ in range(forecast_period):
-            # LSTMの予測
             lstm_input = last_sequence.reshape(1, seq_length, 5)
             lstm_pred = lstm_model.predict(lstm_input, verbose=0)
             
-            # XGBoostの予測
             xgb_input = last_sequence[-1, 1:].reshape(1, -1)
             xgb_pred = xgb_model.predict(xgb_input)
             
             hybrid_pred = (lstm_pred[0, 0] + xgb_pred[0]) / 2
+            
+            # 異常値の検出と処理
+            last_close = last_sequence[-1, 0]
+            if abs(hybrid_pred - last_close) / last_close > 0.1:  # 10%以上の変動を異常とみなす
+                hybrid_pred = last_close * (1 + np.random.uniform(-0.05, 0.05))  # ±5%のランダムな変動に抑える
+            
             lstm_forecast.append(hybrid_pred)
             xgb_forecast.append(hybrid_pred)
 
@@ -130,6 +134,10 @@ def predict_hybrid(df, forecast_period=10):
 
     # スケール変換を戻す
     forecast = scaler.inverse_transform(np.column_stack((lstm_forecast, last_sequence[-len(lstm_forecast):, 1:])))[:, 0]
+
+    # 予測結果の後処理
+    last_close = df['Close'].iloc[-1]
+    forecast = np.clip(forecast, last_close * 0.5, last_close * 2)  # 予測値を直近の終値の0.5倍から2倍の範囲に制限
 
     last_date = df.index[-1]
     future_dates = pd.date_range(start=last_date + BDay(1), periods=forecast_period, freq='B')
