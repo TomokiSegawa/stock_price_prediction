@@ -2,15 +2,15 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
-from prophet import Prophet
 from datetime import datetime, timedelta
 import japanize_matplotlib
 import traceback
 import requests
 from pandas.tseries.offsets import BDay
 from bs4 import BeautifulSoup
+from statsmodels.tsa.arima.model import ARIMA
+from prophet import Prophet
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -30,49 +30,54 @@ def get_stock_data(code):
 
 def get_company_name(code):
     try:
-        # まず、yfinanceから企業名を取得
         stock = yf.Ticker(f"{code}.T")
         company_name = stock.info.get('longName') or stock.info.get('shortName')
         if company_name:
             return company_name
 
-        # yfinanceで取得できない場合、Google検索を試みる
         url = f"https://www.google.com/search?q={code}+株式会社"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Google検索結果の最初のタイトルを取得
-        search_result = soup.find('div', class_='yuRUbf')
-        if search_result:
-            title = search_result.find('h3')
-            if title:
-                return title.text.split('-')[0].strip()
+        title = soup.find('h3', class_='r')
+        if title:
+            return title.text.split('-')[0].strip()
         
         return f"企業 {code}"
     except Exception as e:
         st.warning(f"企業名の取得に失敗しました: {str(e)}")
         return f"企業 {code}"
 
-def predict_stock_price(df):
-    # Prophetのための日付フォーマット変更
+def predict_hybrid(df, forecast_period=10):
+    # ARIMA model
+    arima_model = ARIMA(df['Close'], order=(1, 1, 1))
+    arima_results = arima_model.fit()
+    arima_forecast = arima_results.forecast(steps=forecast_period)
+    
+    # Prophet model
     prophet_df = df.reset_index()[['Date', 'Close']]
     prophet_df.columns = ['ds', 'y']
-    prophet_df['ds'] = prophet_df['ds'].dt.tz_localize(None)
+    prophet_model = Prophet(daily_seasonality=True)
+    prophet_model.fit(prophet_df)
+    future_dates = prophet_model.make_future_dataframe(periods=forecast_period)
+    prophet_forecast = prophet_model.predict(future_dates)
+    prophet_forecast = prophet_forecast.tail(forecast_period)['yhat']
     
-    model = Prophet(daily_seasonality=True)
-    model.fit(prophet_df)
+    # Combine ARIMA and Prophet forecasts
+    hybrid_forecast = (arima_forecast + prophet_forecast.values) / 2
     
-    future_dates = model.make_future_dataframe(periods=10)
-    forecast = model.predict(future_dates)
+    last_date = df.index[-1]
+    future_dates = pd.date_range(start=last_date + BDay(1), periods=forecast_period, freq='B')
+    forecast = pd.DataFrame({'ds': future_dates, 'yhat': hybrid_forecast})
     
-    return forecast.tail(10)[['ds', 'yhat']]
+    return forecast
 
 def create_stock_chart(df, forecast, company_name, code):
     plt.figure(figsize=(12, 6))
-    sns.lineplot(data=df, x=df.index, y='Close', label='過去の株価')
-    sns.lineplot(x=forecast['ds'], y=forecast['yhat'], label='予測株価', linestyle='--')
-    plt.title(f'{company_name}（{code}）の株価チャート（過去2年間と今後10日間の予測）')
+    plt.plot(df.index, df['Close'], label='過去の株価')
+    plt.plot(forecast['ds'], forecast['yhat'], label='予測株価', linestyle='--')
+    plt.title(f'{company_name}（{code}）の株価チャート（過去2年間と今後の予測）')
     plt.xlabel('日付')
     plt.ylabel('株価')
     plt.legend()
@@ -95,7 +100,7 @@ def create_prediction_table(df, forecast):
 
 def main():
     st.set_page_config(layout="wide")
-    st.title('株価予測アプリ（改良版）')
+    st.title('株価予測アプリ（ハイブリッドモデル版）')
 
     stock_code = st.text_input('4桁の株式コードを入力してください:')
 
@@ -108,7 +113,7 @@ def main():
                     return
 
                 company_name = get_company_name(stock_code)
-                forecast = predict_stock_price(df)
+                forecast = predict_hybrid(df)
 
                 st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
                 chart = create_stock_chart(df, forecast, company_name, stock_code)
