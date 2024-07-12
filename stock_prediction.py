@@ -10,10 +10,7 @@ import requests
 from pandas.tseries.offsets import BDay
 from bs4 import BeautifulSoup
 from statsmodels.tsa.arima.model import ARIMA
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from tensorflow.keras.optimizers import Adam
+from prophet import Prophet
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -52,54 +49,23 @@ def get_company_name(code):
         st.warning(f"企業名の取得に失敗しました: {str(e)}")
         return f"企業 {code}"
 
-def create_sequences(data, seq_length):
-    X, y = [], []
-    for i in range(len(data) - seq_length):
-        X.append(data[i:(i + seq_length), 0])
-        y.append(data[i + seq_length, 0])
-    return np.array(X), np.array(y)
-
-def build_lstm_model(input_shape):
-    model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=input_shape))
-    model.add(LSTM(50))
-    model.add(Dense(1))
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
-    return model
-
 def predict_hybrid(df, forecast_period=10):
     # ARIMA model
     arima_model = ARIMA(df['Close'], order=(1, 1, 1))
     arima_results = arima_model.fit()
     arima_forecast = arima_results.forecast(steps=forecast_period)
     
-    # LSTM model
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(df['Close'].values.reshape(-1, 1))
+    # Prophet model
+    prophet_df = df.reset_index()[['Date', 'Close']]
+    prophet_df.columns = ['ds', 'y']
+    prophet_model = Prophet(daily_seasonality=True)
+    prophet_model.fit(prophet_df)
+    future_dates = prophet_model.make_future_dataframe(periods=forecast_period)
+    prophet_forecast = prophet_model.predict(future_dates)
+    prophet_forecast = prophet_forecast.tail(forecast_period)['yhat']
     
-    seq_length = 60
-    X, y = create_sequences(scaled_data, seq_length)
-    
-    split = int(0.8 * len(X))
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
-    
-    lstm_model = build_lstm_model((seq_length, 1))
-    lstm_model.fit(X_train, y_train, epochs=50, batch_size=32, verbose=0)
-    
-    last_sequence = scaled_data[-seq_length:]
-    lstm_forecast = []
-    
-    for _ in range(forecast_period):
-        next_pred = lstm_model.predict(last_sequence.reshape(1, seq_length, 1))
-        lstm_forecast.append(next_pred[0, 0])
-        last_sequence = np.roll(last_sequence, -1)
-        last_sequence[-1] = next_pred
-    
-    lstm_forecast = scaler.inverse_transform(np.array(lstm_forecast).reshape(-1, 1)).flatten()
-    
-    # Combine ARIMA and LSTM forecasts
-    hybrid_forecast = (arima_forecast + lstm_forecast) / 2
+    # Combine ARIMA and Prophet forecasts
+    hybrid_forecast = (arima_forecast + prophet_forecast.values) / 2
     
     last_date = df.index[-1]
     future_dates = pd.date_range(start=last_date + BDay(1), periods=forecast_period, freq='B')
