@@ -58,6 +58,7 @@ def predict_hybrid(df, forecast_period=10):
     # Prophet model
     prophet_df = df.reset_index()[['Date', 'Close']]
     prophet_df.columns = ['ds', 'y']
+    prophet_df['ds'] = prophet_df['ds'].dt.tz_localize(None)  # タイムゾーン情報を削除
     prophet_model = Prophet(daily_seasonality=True)
     prophet_model.fit(prophet_df)
     future_dates = prophet_model.make_future_dataframe(periods=forecast_period)
