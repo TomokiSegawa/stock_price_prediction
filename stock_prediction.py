@@ -16,6 +16,8 @@ from tensorflow.keras.optimizers import Adam
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
 import time
+import sys
+import os
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -103,17 +105,28 @@ def predict_hybrid(df, forecast_period=10):
     lstm_forecast = []
     xgb_forecast = []
 
-    for _ in range(forecast_period):
-        lstm_pred = lstm_model.predict(last_sequence.reshape(1, seq_length, 5))
-        xgb_pred = xgb_model.predict(last_sequence[-1, 1:].reshape(1, -1))
-        
-        hybrid_pred = (lstm_pred[0, 0] + xgb_pred[0]) / 2
-        lstm_forecast.append(hybrid_pred)
-        xgb_forecast.append(hybrid_pred)
+    try:
+        for _ in range(forecast_period):
+            # LSTMの予測
+            lstm_input = last_sequence.reshape(1, seq_length, 5)
+            lstm_pred = lstm_model.predict(lstm_input, verbose=0)
+            
+            # XGBoostの予測
+            xgb_input = last_sequence[-1, 1:].reshape(1, -1)
+            xgb_pred = xgb_model.predict(xgb_input)
+            
+            hybrid_pred = (lstm_pred[0, 0] + xgb_pred[0]) / 2
+            lstm_forecast.append(hybrid_pred)
+            xgb_forecast.append(hybrid_pred)
 
-        new_row = np.array([hybrid_pred] + list(last_sequence[-1, 1:]))
-        last_sequence = np.roll(last_sequence, -1, axis=0)
-        last_sequence[-1] = new_row
+            new_row = np.array([hybrid_pred] + list(last_sequence[-1, 1:]))
+            last_sequence = np.roll(last_sequence, -1, axis=0)
+            last_sequence[-1] = new_row
+
+    except Exception as e:
+        st.error(f"予測中にエラーが発生しました: {str(e)}")
+        st.error(traceback.format_exc())
+        return None
 
     # スケール変換を戻す
     forecast = scaler.inverse_transform(np.column_stack((lstm_forecast, last_sequence[-len(lstm_forecast):, 1:])))[:, 0]
@@ -123,6 +136,7 @@ def predict_hybrid(df, forecast_period=10):
     forecast_df = pd.DataFrame({'ds': future_dates, 'yhat': forecast})
 
     return forecast_df
+
 
 def create_stock_chart(df, forecast, company_name, code):
     plt.figure(figsize=(12, 6))
@@ -150,6 +164,9 @@ def create_prediction_table(df, forecast):
     return prediction_df.set_index('日付').T
 
 def main():
+    # エラー出力をファイルにリダイレクト
+    sys.stderr = open('error_log.txt', 'w')
+    
     st.set_page_config(layout="wide")
     st.title('株価予測アプリ')
 
@@ -168,6 +185,10 @@ def main():
                 
                 with st.spinner('予測を計算中...'):
                     forecast = predict_hybrid(df)
+                
+                if forecast is None:
+                    st.error("予測の計算中にエラーが発生しました。")
+                    return
 
                 st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
                 chart = create_stock_chart(df, forecast, company_name, stock_code)
@@ -182,6 +203,11 @@ def main():
                 st.error(f'詳細なエラー情報:\n{traceback.format_exc()}')
         else:
             st.error('無効な株式コードです。4桁の数字を入力してください。')
+
+    # エラーログを表示（開発時のデバッグ用）
+    if os.path.exists('error_log.txt'):
+        with open('error_log.txt', 'r') as f:
+            st.text(f.read())
 
 if __name__ == '__main__':
     main()
