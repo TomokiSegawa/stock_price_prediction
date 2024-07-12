@@ -9,8 +9,12 @@ import traceback
 import requests
 from pandas.tseries.offsets import BDay
 from bs4 import BeautifulSoup
-from statsmodels.tsa.arima.model import ARIMA
-from prophet import Prophet
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.optimizers import Adam
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
@@ -49,30 +53,66 @@ def get_company_name(code):
         st.warning(f"企業名の取得に失敗しました: {str(e)}")
         return f"企業 {code}"
 
+def create_sequences(data, seq_length):
+    X, y = [], []
+    for i in range(len(data) - seq_length):
+        X.append(data[i:(i + seq_length), :])
+        y.append(data[i + seq_length, 0])
+    return np.array(X), np.array(y)
+
+def build_lstm_model(input_shape):
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=input_shape))
+    model.add(LSTM(50))
+    model.add(Dense(1))
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
+    return model
+
 def predict_hybrid(df, forecast_period=10):
-    # ARIMA model
-    arima_model = ARIMA(df['Close'], order=(1, 1, 1))
-    arima_results = arima_model.fit()
-    arima_forecast = arima_results.forecast(steps=forecast_period)
+    # データの準備
+    data = df[['Close', 'Open', 'High', 'Low', 'Volume']].values
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data)
+
+    # LSTMモデルの学習
+    seq_length = 60
+    X, y = create_sequences(scaled_data, seq_length)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    # Prophet model
-    prophet_df = df.reset_index()[['Date', 'Close']]
-    prophet_df.columns = ['ds', 'y']
-    prophet_df['ds'] = prophet_df['ds'].dt.tz_localize(None)  # タイムゾーン情報を削除
-    prophet_model = Prophet(daily_seasonality=True)
-    prophet_model.fit(prophet_df)
-    future_dates = prophet_model.make_future_dataframe(periods=forecast_period)
-    prophet_forecast = prophet_model.predict(future_dates)
-    prophet_forecast = prophet_forecast.tail(forecast_period)['yhat']
-    
-    # Combine ARIMA and Prophet forecasts
-    hybrid_forecast = (arima_forecast + prophet_forecast.values) / 2
-    
+    lstm_model = build_lstm_model((seq_length, 5))
+    lstm_model.fit(X_train, y_train, epochs=50, batch_size=32, validation_data=(X_test, y_test), verbose=0)
+
+    # XGBoostモデルの学習
+    xgb_data = df[['Open', 'High', 'Low', 'Volume']].values
+    xgb_target = df['Close'].values
+    xgb_model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100)
+    xgb_model.fit(xgb_data, xgb_target)
+
+    # 予測
+    last_sequence = scaled_data[-seq_length:]
+    lstm_forecast = []
+    xgb_forecast = []
+
+    for _ in range(forecast_period):
+        lstm_pred = lstm_model.predict(last_sequence.reshape(1, seq_length, 5))
+        xgb_pred = xgb_model.predict(last_sequence[-1, 1:].reshape(1, -1))
+        
+        hybrid_pred = (lstm_pred[0, 0] + xgb_pred[0]) / 2
+        lstm_forecast.append(hybrid_pred)
+        xgb_forecast.append(hybrid_pred)
+
+        new_row = np.array([hybrid_pred] + list(last_sequence[-1, 1:]))
+        last_sequence = np.roll(last_sequence, -1, axis=0)
+        last_sequence[-1] = new_row
+
+    # スケール変換を戻す
+    forecast = scaler.inverse_transform(np.column_stack((lstm_forecast, last_sequence[-len(lstm_forecast):, 1:])))[:, 0]
+
     last_date = df.index[-1]
     future_dates = pd.date_range(start=last_date + BDay(1), periods=forecast_period, freq='B')
-    forecast = pd.DataFrame({'ds': future_dates, 'yhat': hybrid_forecast})
-    
-    return forecast
+    forecast_df = pd.DataFrame({'ds': future_dates, 'yhat': forecast})
+
+    return forecast_df
 
 def create_stock_chart(df, forecast, company_name, code):
     plt.figure(figsize=(12, 6))
@@ -101,7 +141,7 @@ def create_prediction_table(df, forecast):
 
 def main():
     st.set_page_config(layout="wide")
-    st.title('株価予測アプリ（ハイブリッドモデル版）')
+    st.title('株価予測アプリ（LSTM-XGBoostハイブリッドモデル版）')
 
     stock_code = st.text_input('4桁の株式コードを入力してください:')
 
