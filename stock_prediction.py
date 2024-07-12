@@ -15,22 +15,32 @@ from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.optimizers import Adam
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
+import time
 
 def is_valid_stock_code(code):
     return len(code) == 4 and code.isdigit()
 
-def get_stock_data(code):
+def get_stock_data(code, max_retries=3, retry_delay=5):
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365 * 2)  # 2年分のデータを取得
-    try:
-        stock = yf.Ticker(f"{code}.T")
-        df = stock.history(start=start_date, end=end_date)
-        if df.empty:
-            raise ValueError("データが取得できませんでした。")
-        return stock, df
-    except Exception as e:
-        st.error(f"Yahoo Finance APIからのデータ取得に失敗しました: {str(e)}")
-        return None, None
+    
+    for attempt in range(max_retries):
+        try:
+            stock = yf.Ticker(f"{code}.T")
+            df = stock.history(start=start_date, end=end_date, timeout=10)
+            if df.empty:
+                raise ValueError("データが取得できませんでした。")
+            return stock, df
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                st.warning(f"データ取得に失敗しました。{retry_delay}秒後に再試行します。(試行回数: {attempt + 1})")
+                time.sleep(retry_delay)
+            else:
+                st.error(f"Yahoo Finance APIからのデータ取得に失敗しました: {str(e)}")
+                return None, None
+        except Exception as e:
+            st.error(f"予期せぬエラーが発生しました: {str(e)}")
+            return None, None
 
 def get_company_name(code):
     try:
@@ -141,20 +151,23 @@ def create_prediction_table(df, forecast):
 
 def main():
     st.set_page_config(layout="wide")
-    st.title('株価予測アプリ（LSTM-XGBoostハイブリッドモデル版）')
+    st.title('株価予測アプリ')
 
     stock_code = st.text_input('4桁の株式コードを入力してください:')
 
     if stock_code:
         if is_valid_stock_code(stock_code):
             try:
-                stock, df = get_stock_data(stock_code)
+                with st.spinner('データを取得中...'):
+                    stock, df = get_stock_data(stock_code)
                 if stock is None or df is None:
                     st.error("データの取得に失敗しました。別の銘柄コードを試すか、しばらく待ってから再度お試しください。")
                     return
 
                 company_name = get_company_name(stock_code)
-                forecast = predict_hybrid(df)
+                
+                with st.spinner('予測を計算中...'):
+                    forecast = predict_hybrid(df)
 
                 st.subheader(f'【{company_name}（{stock_code}）の株価チャート】')
                 chart = create_stock_chart(df, forecast, company_name, stock_code)
